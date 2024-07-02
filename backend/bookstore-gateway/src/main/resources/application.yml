@@ -1,0 +1,16 @@
+spring:
+  cloud:
+    gateway:
+      routes:
+        - id: bookstore-identity-service
+          uri: http://localhost:8081
+          predicates:
+          - Path=/auth/**
+
+  application:
+    name: BOOKSTORE-GATEWAY
+
+eureka:
+  client:
+    service-url:
+      defaultZone : http://localhost:8761/eureka/
