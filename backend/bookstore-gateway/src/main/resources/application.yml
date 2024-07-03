@@ -7,6 +7,9 @@ spring:
           predicates:
           - Path=/auth/**
 
+  config:
+    additional_location: "/env.properties"
+
   application:
     name: BOOKSTORE-GATEWAY
 
