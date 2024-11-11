@@ -5,3 +5,4 @@ Technologies used:
 2. React
 3. Docker
 4. Kubernetes
+5. Postgres
