@@ -4,12 +4,14 @@ import com.bookstore.gateway.dto.CredentialsDTO;
 import com.bookstore.gateway.dto.TokenResponseDTO;
 import jakarta.annotation.PostConstruct;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.HttpStatusCode;
 import org.springframework.http.MediaType;
 import org.springframework.stereotype.Service;
 import org.springframework.web.reactive.function.BodyInserters;
 import org.springframework.web.reactive.function.client.WebClient;
+import org.springframework.web.reactive.function.client.WebClientResponseException;
 import org.springframework.web.server.ResponseStatusException;
 import reactor.core.publisher.Mono;
 
@@ -28,7 +30,7 @@ public class KeycloakTokenService {
     private String clientSecret;
 
     @Value("${KEYCLOAK_REALM_ADMIN_PASSWORD}")
-    private String realAdminPassword;
+    private String realmAdminPassword;
 
     private final WebClient webClient;
 
@@ -40,11 +42,13 @@ public class KeycloakTokenService {
 
     private String userLink;
 
+    private String logoutLink;
+
     @PostConstruct
     public void init(){
         tokenLink = "http://host.docker.internal:8080/realms/"+realmName+"/protocol/openid-connect/token";
         userLink = "http://host.docker.internal:8080/admin/realms/"+realmName+"/users";
-
+        logoutLink = "http://host.docker.internal:8080/realms/"+realmName+"/protocol/openid-connect/logout";
     }
 
     public Mono<TokenResponseDTO> getToken(Map<String, String> map){
@@ -87,17 +91,61 @@ public class KeycloakTokenService {
                         .with("client_secret", clientSecret)
                         .with("grant_type", "password")
                         .with("username", "realmadmin")
-                        .with("password", realAdminPassword))
-                .retrieve().bodyToMono(TokenResponseDTO.class)
+                        .with("password", realmAdminPassword))
+                .retrieve()
+                .onStatus(HttpStatusCode::is4xxClientError, clientResponse -> {
+                    return Mono.error(new ResponseStatusException(clientResponse.statusCode(), "Error Processing admin Credentials"));
+                }).bodyToMono(TokenResponseDTO.class)
                 .map(TokenResponseDTO::getAccess_token);
     }
 
     public Mono<String> createUser(CredentialsDTO credentialsDTO){
+        return getAdminToken()
+                .flatMap(adminToken ->
+                        webClient.post()
+                                .uri(userLink) // replace with the actual URI for user creation
+                                .contentType(MediaType.APPLICATION_JSON)
+                                .header(HttpHeaders.AUTHORIZATION, "Bearer " + adminToken)
+                                .bodyValue(credentialsDTO)
+                                .retrieve()
+                                .onStatus(HttpStatusCode::is4xxClientError, clientResponse -> {
+                                    if(clientResponse.statusCode() == HttpStatus.CONFLICT){
+                                        return Mono.error(new ResponseStatusException(clientResponse.statusCode(), "Username Already Exists"));
+                                    }
+                                    return Mono.error(new ResponseStatusException(clientResponse.statusCode(), "Error Creating user"));
+                                })
+                                .onStatus(HttpStatusCode::is5xxServerError, clientResponse -> {
+                                    return Mono.error(new ResponseStatusException(clientResponse.statusCode(), "Internal Server Error"));
+                                })
+                                .bodyToMono(String.class)
+                );
+    }
+
+    public Mono<String> logout(String refreshToken) {
+        System.out.println(refreshToken);
+
         return webClient.post()
-                .uri(userLink)
-                .header("Authorization", "Bearer" + getAdminToken())
-                .bodyValue(credentialsDTO)
-                .retrieve().bodyToMono(String.class);
+                .uri(logoutLink)
+                .contentType(MediaType.APPLICATION_FORM_URLENCODED)
+                .body(BodyInserters
+                        .fromFormData("client_id", clientId)
+                        .with("client_secret", clientSecret)
+                        .with("refresh_token", refreshToken))
+                .retrieve()
+                .toBodilessEntity()
+                .flatMap(response -> {
+                    if (response.getStatusCode().is2xxSuccessful()) {
+                        return Mono.just("User logged out successfully");
+                    } else {
+                        return Mono.error(new RuntimeException("Logout failed with status: " + response.getStatusCode()));
+                    }
+                })
+                .onErrorResume(WebClientResponseException.class, ex -> {
+                    // Log the error (optional)
+                    System.err.println("Logout error: " + ex.getMessage());
+                    // Map the error response
+                    return Mono.just("Logout failed: " + ex.getStatusText());
+                });
     }
 
 }

@@ -39,8 +39,19 @@ public class GatewayController {
                 });
     }
 
-//    @PostMapping("/register-user")
-//    public Mono<ResponseEntity<Object>> register(@RequestBody CredentialsDTO credentialsDTO){
-//
-//    }
+    @PostMapping("/register-user")
+    public Mono<ResponseEntity<String>> register(@RequestBody CredentialsDTO credentialsDTO) {
+        return keycloakTokenService.createUser(credentialsDTO)
+                .map(response -> ResponseEntity.status(HttpStatus.CREATED).body("User Created"))
+                .onErrorResume(ResponseStatusException.class, ex -> {
+                    return Mono.just(ResponseEntity.status(ex.getStatusCode()).body(ex.getReason()));
+                });
+    }
+
+    @PostMapping("/logout-user")
+    public Mono<ResponseEntity<String>> logout(@RequestBody String refreshToken) {
+        return keycloakTokenService.logout(refreshToken)
+                .map(ResponseEntity::ok)
+                .onErrorResume(error -> Mono.just(ResponseEntity.status(500).body("Logout failed: " + error.getMessage())));
+    }
 }
