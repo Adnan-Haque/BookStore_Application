@@ -1,0 +1,104 @@
+services:
+  postgres:
+    image: postgres:16.4-alpine3.20
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    # networks:
+    #   - backend-network
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - backend
+
+  keycloak:
+    build:
+      context: ./Keycloak
+      dockerfile: Dockerfile
+    environment:
+      KC_DB: postgres
+      KC_DB_URL: jdbc:postgresql://postgres:5432/keycloakdb
+      KC_DB_USERNAME: ${POSTGRES_USER}
+      KC_DB_PASSWORD: ${POSTGRES_PASSWORD}
+      # KC_HOSTNAME: keycloak.local
+      # KC_HOSTNAME: localhost
+      # KC_HOSTNAME: host.docker.internal
+      # KEYCLOAK_URL: https://localhost:8443
+      KEYCLOAK_ADMIN: ${KEYCLOAK_ADMIN_USERNAME}             # Set the admin username
+      KEYCLOAK_ADMIN_PASSWORD: ${KEYCLOAK_ADMIN_PASSWORD}  # Set the admin password
+      # KC_HTTPS_CERTIFICATE_FILE: "/etc/keycloak/certs/certfile.pem" # Mount the cert file path
+      # KC_HTTPS_CERTIFICATE_KEY_FILE: "/etc/keycloak/certs/keyfile.pem"  # Mount the key file path
+      # KC_HTTPS_CERTIFICATE_FILE: /etc/certs/fullchain.pem
+      # KC_HTTPS_CERTIFICATE_KEY_FILE: /etc/certs/privkey.pem
+      KC_HOSTNAME: keycloak-domain.com
+    # networks:
+    # - backend-network
+    ports:
+      - "8443:8443"  # Expose the HTTPS port for Keycloak
+      # - "8080:8080"
+    command: ["start", "--https-certificate-file=/etc/keycloak/certs/live/keycloak-domain.com/fullchain.pem", "--https-certificate-key-file=/etc/keycloak/certs/live/keycloak-domain.com/privkey.pem"]
+    # command: ["start-dev"]
+    # volumes:
+    #   - C:/Users/Adnan/Documents/GitHub/BookStore_Application/certs:/etc/keycloak/certs # Mount the certs directory (read-only)
+    volumes:
+      - certbot_certs:/etc/keycloak/certs:ro
+    networks:
+      - backend
+
+
+  certbot:
+    image: certbot/certbot:v3.0.1
+    container_name: certbot
+    volumes:
+      - certbot_certs:/etc/letsencrypt
+      - certbot_logs:/var/log/letsencrypt
+    entrypoint: >
+      sh -c "certbot certonly --standalone --preferred-challenges http -d keycloak-domain.com -m adnanhaque36@gmail.com --agree-tos && docker-compose restart keycloak"
+    networks:
+      - backend
+
+
+  # pgadmin:
+  #   image: dpage/pgadmin4
+  #   environment:
+  #     PGADMIN_DEFAULT_EMAIL: admin@admin.com  # Admin email for pgAdmin
+  #     PGADMIN_DEFAULT_PASSWORD: ${PGADMIN_DEFAULT_PASSWORD}       # Admin password for pgAdmin
+  #   ports:
+  #     - "8081:80"                             # Access pgAdmin on port 8081
+  #   depends_on:
+  #     - postgres
+
+  gateway:
+    build:
+      context: ./gateway
+      dockerfile: Dockerfile  # Path to your service's Dockerfile
+    environment:
+      DB_URL: jdbc:postgresql://postgres:5432/keycloakdb  # Same URL
+      DB_USERNAME: ${POSTGRES_USER}
+      DB_PASSWORD: ${POSTGRES_PASSWORD}
+      REALM_NAME: ${REALM_NAME}
+      KEYCLOAK_CLIENT_ID: ${KEYCLOAK_CLIENT_ID}
+      KEYCLOAK_CLIENT_SECRET: ${KEYCLOAK_CLIENT_SECRET}
+      KEYCLOAK_REALM_ADMIN_PASSWORD: ${KEYCLOAK_REALM_ADMIN_PASSWORD}
+    # networks:
+    #   - backend-network
+    ports:
+      - "8082:8082"  # Expose a different port for this service
+    networks:
+      - backend
+
+volumes:
+  postgres_data:  # Named volume for persistent PostgreSQL storage
+  certbot_certs: {}  # Named volume (internal, no need to create manually)
+  certbot_logs: {}    # Named volume (internal, no need to create manually)
+
+# networks:
+#   backend-network:  # Define the referenced network
+#     driver: bridge  # Optional: Specify the network driver (default is `bridge`)
+
+networks:
+  backend:
+    name: backend

@@ -1,0 +1,15 @@
+package com.bookstore.gateway.dto;
+
+import lombok.AllArgsConstructor;
+import lombok.Data;
+import lombok.NoArgsConstructor;
+
+@Data
+@NoArgsConstructor
+@AllArgsConstructor
+public class Credentials {
+    private String type;
+    private String value;
+    private Boolean temporary;
+
+}
