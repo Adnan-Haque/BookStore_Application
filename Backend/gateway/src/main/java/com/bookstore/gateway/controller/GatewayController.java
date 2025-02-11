@@ -1,16 +1,13 @@
 package com.bookstore.gateway.controller;
 
-import com.bookstore.gateway.dto.Credentials;
 import com.bookstore.gateway.dto.CredentialsDTO;
-import com.bookstore.gateway.dto.TokenResponseDTO;
 import com.bookstore.gateway.service.KeycloakTokenService;
+import org.springframework.http.HttpCookie;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseCookie;
 import org.springframework.http.ResponseEntity;
-import org.springframework.web.bind.annotation.GetMapping;
-import org.springframework.web.bind.annotation.PostMapping;
-import org.springframework.web.bind.annotation.RequestBody;
-import org.springframework.web.bind.annotation.RestController;
+import org.springframework.security.web.server.csrf.CsrfToken;
+import org.springframework.web.bind.annotation.*;
 import org.springframework.web.server.ResponseStatusException;
 import org.springframework.web.server.ServerWebExchange;
 import reactor.core.publisher.Mono;
@@ -32,20 +29,50 @@ public class GatewayController {
         return Mono.just("OK");
     }
 
+    @GetMapping("/csrf-token")
+    public Mono<ResponseEntity<Object>> getCsrfToken(ServerWebExchange exchange) {
+        // Get the CSRF token (Mono<CsrfToken>)
+        Mono<CsrfToken> csrfTokenMono = exchange.getAttribute(CsrfToken.class.getName());
+
+        assert csrfTokenMono != null;
+        return csrfTokenMono.flatMap(csrfToken -> {
+            if (csrfToken != null) {
+                // Store the CSRF token in a cookie (use HttpOnly, SameSite, Secure as needed)
+                ResponseCookie csrfCookie = ResponseCookie.from(csrfToken.getHeaderName(), csrfToken.getToken())
+                        .httpOnly(false)  // Set to true to prevent access via JavaScript
+                        .secure(true)     // Set true if using HTTPS
+                        .sameSite("Strict") // Restrict cookie to same-site requests only
+                        .build();
+
+                // Add the CSRF token cookie to the response
+                exchange.getResponse().addCookie(csrfCookie);
+
+                // Return the CSRF token in the response body
+                return Mono.just(ResponseEntity.ok(csrfToken));
+            } else {
+                return Mono.just(ResponseEntity.status(HttpStatus.NOT_FOUND).build());
+            }
+        });
+    }
+
     @PostMapping("/login-user")
     public Mono<ResponseEntity<Object>> login(@RequestBody Map<String, String> map, ServerWebExchange exchange) {
         return keycloakTokenService.getToken(map)
                 .flatMap(tokenResponse -> {
                     ResponseCookie accessTokenCookie = ResponseCookie.from("access_token", tokenResponse.getAccess_token())
                             .httpOnly(true)
+                            .secure(true)
                             .path("/")
+                            .sameSite("Strict")
                             .maxAge(tokenResponse.getExpires_in()) // Set based on token life
                             .build();
 
                     // Create refresh token cookie
                     ResponseCookie refreshTokenCookie = ResponseCookie.from("refresh_token", tokenResponse.getRefresh_token())
                             .httpOnly(true)
+                            .secure(true)
                             .path("/")
+                            .sameSite("Strict")
                             .maxAge(tokenResponse.getRefresh_expires_in()) // Set longer for refresh token
                             .build();
 
@@ -61,8 +88,8 @@ public class GatewayController {
     }
 
     @PostMapping("/register-user")
-    public Mono<ResponseEntity<String>> register(@RequestBody CredentialsDTO credentialsDTO) {
-        return keycloakTokenService.createUser(credentialsDTO)
+    public Mono<ResponseEntity<String>> register(@RequestBody CredentialsDTO credentialsDTO, @RequestParam String role) {
+        return keycloakTokenService.createUser(credentialsDTO, role)
                 .map(response -> ResponseEntity.status(HttpStatus.CREATED).body("User Created"))
                 .onErrorResume(ResponseStatusException.class, ex -> {
                     return Mono.just(ResponseEntity.status(ex.getStatusCode()).body(ex.getReason()));

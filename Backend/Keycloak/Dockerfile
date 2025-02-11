@@ -6,11 +6,11 @@ FROM keycloak/keycloak:25.0 as builder
 ENV KC_LOG_LEVEL=DEBUG
 ENV KC_HEALTH_ENABLED=true
 ENV KC_METRICS_ENABLED=true
-# ENV KEYCLOAK_ADMIN admin
-# ENV KEYCLOAK_ADMIN_PASSWORD admin
 
+
+FROM debian:bullseye
+RUN apt-get update && apt-get install -y curl openssl
 # Configure a database vendor
-ENV KC_DB=postgres
 
 WORKDIR /opt/keycloak
 # for demonstration purposes only, please make sure to use proper certificates in production instead
@@ -25,6 +25,7 @@ ENV KC_DB=keycloakdb
 ENV KC_DB_URL=jdbc:postgresql://postgres:5432/keycloakdb
 ENV KC_DB_USERNAME: ${POSTGRES_USER}
 ENV KC_DB_PASSWORD: ${POSTGRES_PASSWORD}
-ENV KC_HOSTNAME=localhost
+# ENV KC_HOSTNAME=${KC_HOSTNAME}
 ENV KEYCLOAK_REALM_ADMIN_PASSWORD=${KEYCLOAK_REALM_ADMIN_PASSWORD}
+
 ENTRYPOINT ["/opt/keycloak/bin/kc.sh"]

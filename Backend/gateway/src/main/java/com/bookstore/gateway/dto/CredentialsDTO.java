@@ -29,7 +29,5 @@ public class CredentialsDTO {
     private List<Credentials> credentials;
 //    private Map<String, String> attributes;
 //    private List<String> groups;
-    @JsonInclude(JsonInclude.Include.NON_NULL)
-    private Roles roles;
 //    private List<String> requiredActions;
 }

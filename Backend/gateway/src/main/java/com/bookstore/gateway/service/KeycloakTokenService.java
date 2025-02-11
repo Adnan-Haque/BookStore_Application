@@ -15,6 +15,7 @@ import org.springframework.web.reactive.function.client.WebClientResponseExcepti
 import org.springframework.web.server.ResponseStatusException;
 import reactor.core.publisher.Mono;
 
+import java.util.List;
 import java.util.Map;
 
 @Service
@@ -46,9 +47,9 @@ public class KeycloakTokenService {
 
     @PostConstruct
     public void init(){
-        tokenLink = "http://host.docker.internal:8080/realms/"+realmName+"/protocol/openid-connect/token";
-        userLink = "http://host.docker.internal:8080/admin/realms/"+realmName+"/users";
-        logoutLink = "http://host.docker.internal:8080/realms/"+realmName+"/protocol/openid-connect/logout";
+        tokenLink = "https://host.docker.internal:8443/realms/"+realmName+"/protocol/openid-connect/token";
+        userLink = "https://host.docker.internal:8443/admin/realms/"+realmName+"/users";
+        logoutLink = "https://host.docker.internal:8443/realms/"+realmName+"/protocol/openid-connect/logout";
     }
 
     public Mono<TokenResponseDTO> getToken(Map<String, String> map){
@@ -99,7 +100,7 @@ public class KeycloakTokenService {
                 .map(TokenResponseDTO::getAccess_token);
     }
 
-    public Mono<String> createUser(CredentialsDTO credentialsDTO){
+    public Mono<String> createUser(CredentialsDTO credentialsDTO, String roleName){
         return getAdminToken()
                 .flatMap(adminToken ->
                         webClient.post()
@@ -118,7 +119,71 @@ public class KeycloakTokenService {
                                     return Mono.error(new ResponseStatusException(clientResponse.statusCode(), "Internal Server Error"));
                                 })
                                 .bodyToMono(String.class)
+                                .then(findUserId(adminToken, credentialsDTO.getUsername()))
+                                .flatMap(userId -> assignRoleToUserWithRetryAndRollback(adminToken, userId, roleName))
                 );
+    }
+
+    private Mono<String> assignRoleToUserWithRetryAndRollback(String adminToken, String userId, String roleName) {
+        return assignRole(adminToken, userId, roleName)
+                .retry(3) // Retry up to 3 times on failure
+                .onErrorResume(ex -> deleteUser(adminToken, userId) // Rollback if retries fail
+                        .then(Mono.error(new ResponseStatusException(HttpStatus.INTERNAL_SERVER_ERROR, "Failed to assign role; user creation rolled back", ex))));
+    }
+
+    private Mono<Void> deleteUser(String adminToken, String userId) {
+        return webClient.delete()
+                .uri("http://host.docker.internal:8080/admin/realms/{realm}/users/{userId}", realmName, userId)
+                .header(HttpHeaders.AUTHORIZATION, "Bearer " + adminToken)
+                .retrieve()
+                .onStatus(HttpStatusCode::isError, clientResponse ->
+                        Mono.error(new ResponseStatusException(clientResponse.statusCode(), "Error deleting user during rollback"))
+                )
+                .bodyToMono(Void.class);
+    }
+
+    private Mono<String> findUserId(String adminToken, String username) {
+        return webClient.get()
+                .uri("http://host.docker.internal:8080/admin/realms/{realm}/users?username={username}", realmName, username)
+                .header(HttpHeaders.AUTHORIZATION, "Bearer " + adminToken)
+                .retrieve()
+                .onStatus(HttpStatusCode::isError, clientResponse ->
+                        Mono.error(new ResponseStatusException(clientResponse.statusCode(), "Error finding user ID"))
+                )
+                .bodyToFlux(Map.class)
+                .filter(user -> username.equals(user.get("username")))
+                .next() // Take the first matching user
+                .map(user -> (String) user.get("id")); // Extract the userId
+    }
+
+    // Helper method to assign role to user
+    private Mono<String> assignRole(String adminToken, String userId, String roleName) {
+        return getRoleId(adminToken, roleName)
+                .flatMap(roleId ->
+                        webClient.post()
+                                .uri("http://host.docker.internal:8080/admin/realms/{realm}/users/{userId}/role-mappings/realm", realmName, userId)
+                                .contentType(MediaType.APPLICATION_JSON)
+                                .header(HttpHeaders.AUTHORIZATION, "Bearer " + adminToken)
+                                .bodyValue(List.of(Map.of("id", roleId, "name", roleName))) // Assign role by ID and name
+                                .retrieve()
+                                .onStatus(HttpStatusCode::isError, clientResponse ->
+                                        Mono.error(new ResponseStatusException(clientResponse.statusCode(), "Error assigning role to user"))
+                                )
+                                .bodyToMono(String.class)
+                );
+    }
+
+    // Helper method to get Role ID
+    private Mono<String> getRoleId(String adminToken, String roleName) {
+        return webClient.get()
+                .uri("http://host.docker.internal:8080/admin/realms/{realm}/roles/{roleName}", realmName, roleName)
+                .header(HttpHeaders.AUTHORIZATION, "Bearer " + adminToken)
+                .retrieve()
+                .onStatus(HttpStatusCode::isError, clientResponse ->
+                        Mono.error(new ResponseStatusException(clientResponse.statusCode(), "Error retrieving role ID"))
+                )
+                .bodyToMono(Map.class)
+                .map(roleMap -> (String) roleMap.get("id")); // Extract the role ID
     }
 
     public Mono<String> logout(String refreshToken) {
